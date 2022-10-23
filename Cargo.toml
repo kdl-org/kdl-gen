@@ -1,0 +1,9 @@
+[package]
+name = "kdl-gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.8.5"
+rand_regex = "0.15.1"
+clap = { version = "4.0.18", features = ["derive"] }
