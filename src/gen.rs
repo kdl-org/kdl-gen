@@ -427,8 +427,8 @@ fn commented_block<T: Write>(ctx: &mut Context<T>) -> io::Result<usize> {
         |c| write_literal(c, "*/"),
         |c| concat(c, &[
             |c| select(c, &[
-                |c| write_literal(c, "*"),
-                |c| write_literal(c, "/"),
+                |c| write_rand_re(c, "\\*[^/]", 1),
+                |c| write_rand_re(c, "/[^*]", 1),
                 |c| write_rand_re(c, "[^*/]+", c.conf.comment_len_max),
                 |c| multi_line_comment(c)
             ]),

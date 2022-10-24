@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::process;
 use clap::Parser;
 mod gen;
@@ -36,8 +36,8 @@ pub struct Configuration {
 
 fn main() {
     let conf = Configuration::parse();
-
-    match gen::document(&mut std::io::stdout(), conf) {
+    let mut out = BufWriter::new(std::io::stdout());
+    match gen::document(&mut out, conf) {
         Err(e) => {
             std::io::stderr().write(e.to_string().as_bytes()).unwrap();
             process::exit(1);
