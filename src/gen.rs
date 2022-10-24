@@ -425,20 +425,15 @@ fn multi_line_comment<T: Write>(ctx: &mut Context<T>) -> io::Result<usize> {
 fn commented_block<T: Write>(ctx: &mut Context<T>) -> io::Result<usize> {
     select(ctx, &[
         |c| write_literal(c, "*/"),
-        |c| {
-            match select(c, &[
+        |c| concat(c, &[
+            |c| select(c, &[
                 |c| write_literal(c, "*"),
                 |c| write_literal(c, "/"),
                 |c| write_rand_re(c, "[^*/]+", c.conf.comment_len_max),
                 |c| multi_line_comment(c)
-            ]) {
-                Err(e) => Err(e),
-                Ok(s) => match commented_block(c) {
-                    Err(e) => Err(e),
-                    Ok(sc) => Ok(s + sc)
-                }
-            }
-        }
+            ]),
+            commented_block
+        ])
     ])
 }
 
