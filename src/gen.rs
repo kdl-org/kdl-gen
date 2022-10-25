@@ -45,6 +45,7 @@ pub fn document<'t, T: Write, R: Rng>(out: &mut T, rng: &mut R, conf: Configurat
         rng,
         depth: 0,
     };
+
     nodes(ctx)
 }
 

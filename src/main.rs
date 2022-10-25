@@ -60,5 +60,5 @@ fn main() {
             process::exit(1);
         },
         Ok(_) => process::exit(0),
-    }
+    };
 }
