@@ -18,7 +18,7 @@ A number of arguments are available to control the shape of the output:
 
 ```
 -d, --depth-max <DEPTH_MAX>                      [default: 3]
--n, --nodes-per-child-max <NODES_PER_CHILD_MAX>  [default: 10]
+-n, --nodes-per-child-max <NODES_PER_CHILD_MAX>  [default: 3]
 -e, --extra-space-max <EXTRA_SPACE_MAX>          [default: 3]
 -p, --props-or-args-max <PROPS_OR_ARGS_MAX>      [default: 10]
 -b, --blank-lines-max <BLANK_LINES_MAX>          [default: 1]

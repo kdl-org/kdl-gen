@@ -11,7 +11,7 @@ pub struct Configuration {
     #[clap(default_value_t=3, short, long)]
     pub depth_max: u32,
 
-    #[clap(default_value_t=10, short, long)]
+    #[clap(default_value_t=3, short, long)]
     pub nodes_per_child_max: u32,
 
     #[clap(default_value_t=3, short, long)]
