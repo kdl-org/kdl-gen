@@ -26,6 +26,7 @@ A number of arguments are available to control the shape of the output:
 -s, --string-len-max <STRING_LEN_MAX>            [default: 100]
 -l, --num-len-max <NUM_LEN_MAX>                  [default: 10]
 -c, --comment-len-max <COMMENT_LEN_MAX>          [default: 100]
+-a, --ascii-only                                 [default: false]
 ```
 
 In addition, several arguments are available for help debugging when

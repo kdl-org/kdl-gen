@@ -1,10 +1,11 @@
 use std::io;
 use std::io::Write;
 use rand::{Rng, RngCore, Error};
+use regex_syntax::Parser;
 use crate::Configuration;
 
 struct Context<'t, T: Write, R: Rng> {
-    conf: Configuration,
+    conf: &'t Configuration,
     out: &'t mut T,
     rng: &'t mut R,
     depth: u32,
@@ -38,7 +39,13 @@ impl<'t, T: Write, R: Rng> RngCore for Context<'t, T, R> {
     }
 }
 
-pub fn document<'t, T: Write, R: Rng>(out: &mut T, rng: &mut R, conf: Configuration) -> io::Result<usize> {
+impl<'t, T: Write, R: Rng> Context<'t, T, R> {
+    fn get_regex_parser(&self) -> Parser {
+        regex_syntax::ParserBuilder::new().unicode(!self.conf.ascii_only).build()
+    }
+}
+
+pub fn document<'t, T: Write, R: Rng>(out: &mut T, rng: &mut R, conf: &Configuration) -> io::Result<usize> {
     let ctx: &mut Context<T, R> = &mut Context {
         conf,
         out,
@@ -238,33 +245,46 @@ fn bare_identifier<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usiz
 // identifier-char := unicode - linespace - [\/(){}<>;[]=,"]
 //Hax: To avoid generating one of the keywords (true|false|null), we don't use 'u' or 'l'
 fn identifier_char<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    write_rand_re(ctx,
-                  "[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
-                  \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                  \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                  \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                  \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                  \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    return if ctx.conf.ascii_only {
+        write_rand_re(ctx,"[-+0-9A-Za-km-tv-z]", 1)
+    } else {
+        write_rand_re(ctx,
+                      "[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
+                      \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                      \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                      \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                      \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                      \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    };
 }
 
 fn identifier_char_minus_digit<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    write_rand_re(ctx,
-                  "[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
-                  \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                  \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                  \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                  \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                  \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    return if ctx.conf.ascii_only {
+        write_rand_re(ctx,"[-+A-Za-km-tv-z]", 1)
+    } else {
+        write_rand_re(ctx,
+                      "[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
+                      \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                      \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                      \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                      \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                      \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    };
 }
 
 fn identifier_char_minus_digit_and_sign<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    write_rand_re(ctx,
-                  "[^-+ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
-                  \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                  \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                  \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                  \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                  \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    return if ctx.conf.ascii_only {
+        write_rand_re(ctx,
+                      "[A-Za-km-tv-z]", 1)
+    } else {
+        write_rand_re(ctx,
+                      "[^-+ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
+                      \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                      \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                      \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                      \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                      \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    };
 }
 
 // keyword := boolean | 'null'
@@ -373,7 +393,13 @@ fn character<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
             |c| write_literal(c, "\\"),
             escape
         ]),
-        |c| write_rand_re(c, "[^\\\\\"]", 1)
+        |c| {
+            return if c.conf.ascii_only {
+                write_rand_re(c, "[a-zA-Z0-9 .,;!@\\#\\$%\\^&*()]", 1)
+            } else {
+                write_rand_re(c, "[^\\\\\"]", 1)
+            }
+        }
     ])
 }
 
@@ -413,7 +439,13 @@ fn raw_string_hash<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usiz
 fn raw_string_quotes<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
     concat(ctx, &[
         |c| write_literal(c, "\""),
-        |c| write_rand_re(c, ".*", c.conf.string_len_max),
+        |c| {
+            return if c.conf.ascii_only {
+                write_rand_re(c, "\\w*", c.conf.string_len_max)
+            } else {
+                write_rand_re(c, ".*", c.conf.string_len_max)
+            }
+        },
         |c| write_literal(c, "\""),
     ])
 }
@@ -424,7 +456,7 @@ fn number<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
         write_literal(ctx, "<NUMBER>").unwrap();
     }
 
-    let result= select(ctx, &[decimal, hex, octal, binary]);
+    let result = select(ctx, &[decimal, hex, octal, binary]);
 
     if ctx.conf.debug {
         write_literal(ctx, "</NUMBER>").unwrap();
@@ -601,7 +633,13 @@ fn single_line_comment<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<
 
     let result = concat(ctx, &[
         |c| write_literal(c, "//"),
-        |c| write_rand_re(c, "[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", c.conf.comment_len_max),
+        |c| {
+            return if c.conf.ascii_only {
+                write_rand_re(c, "\\w+", c.conf.comment_len_max)
+            } else {
+                write_rand_re(c, "[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", c.conf.comment_len_max)
+            }
+        },
         newline
     ]);
 
@@ -635,12 +673,23 @@ fn commented_block<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usiz
     select(ctx, &[
         |c| write_literal(c, "*/"),
         |c| concat(c, &[
-            |c| select(c, &[
-                |c| write_rand_re(c, "\\*[^/]", 1),
-                |c| write_rand_re(c, "/[^*]", 1),
-                |c| write_rand_re(c, "[^*/]+", c.conf.comment_len_max),
-                |c| multi_line_comment(c)
-            ]),
+            |c| {
+                return if c.conf.ascii_only {
+                    select(c, &[
+                        |c| write_rand_re(c, "\\*\\w", 1),
+                        |c| write_rand_re(c, "/\\w", 1),
+                        |c| write_rand_re(c, "\\w+", c.conf.comment_len_max),
+                        |c| multi_line_comment(c)
+                    ])
+                } else {
+                    select(c, &[
+                        |c| write_rand_re(c, "\\*[^/]", 1),
+                        |c| write_rand_re(c, "/[^*]", 1),
+                        |c| write_rand_re(c, "[^*/]+", c.conf.comment_len_max),
+                        |c| multi_line_comment(c)
+                    ])
+                }
+            },
             commented_block
         ])
     ])
@@ -663,7 +712,8 @@ fn write_rand_re<T: Write, R: Rng>(
 }
 
 fn rand_re<T: Write, R: Rng>(ctx: &mut Context<T, R>, pattern: &str, rep: u32) -> String {
-    let re = rand_regex::Regex::compile(pattern, rep).unwrap();
+    let hir = ctx.get_regex_parser().parse(pattern).unwrap();
+    let re = rand_regex::Regex::with_hir(hir, rep).unwrap();
     ctx.sample(re)
 }
 

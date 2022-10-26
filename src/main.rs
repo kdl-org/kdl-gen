@@ -35,6 +35,9 @@ pub struct Configuration {
     #[clap(default_value_t=100, short, long)]
     pub comment_len_max: u32,
 
+    #[clap(default_value_t=false, short, long)]
+    pub ascii_only: bool,
+
     #[clap(default_value_t=false, long)]
     pub debug: bool,
 
@@ -54,7 +57,7 @@ fn main() {
     std::io::stderr().write(format!("seed: {}\n", seed).as_bytes()).unwrap();
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
 
-    match gen::document(&mut out, &mut rng, conf) {
+    match gen::document(&mut out, &mut rng, &conf) {
         Err(e) => {
             std::io::stderr().write(e.to_string().as_bytes()).unwrap();
             process::exit(1);

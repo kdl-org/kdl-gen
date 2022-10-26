@@ -7,4 +7,5 @@ edition = "2021"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_regex = "0.15.1"
+regex-syntax = "0.6.27"
 clap = { version = "4.0.18", features = ["derive"] }
