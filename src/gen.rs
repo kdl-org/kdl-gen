@@ -570,15 +570,23 @@ fn linespace<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
 
 // newline := See Table (All line-break white_space)
 fn newline<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    select(ctx, &[
-        |c| write_literal(c, "\u{000D}"),
-        |c| write_literal(c, "\u{000A}"),
-        |c| write_literal(c, "\u{000D}\u{000A}"),
-        |c| write_literal(c, "\u{0085}"),
-        |c| write_literal(c, "\u{000C}"),
-        |c| write_literal(c, "\u{2028}"),
-        |c| write_literal(c, "\u{2029}"),
-    ])
+    return if ctx.conf.ascii_only {
+        select(ctx, &[
+            |c| write_literal(c, "\u{000D}"),
+            |c| write_literal(c, "\u{000A}"),
+            |c| write_literal(c, "\u{000D}\u{000A}"),
+        ])
+    } else {
+        select(ctx, &[
+            |c| write_literal(c, "\u{000D}"),
+            |c| write_literal(c, "\u{000A}"),
+            |c| write_literal(c, "\u{000D}\u{000A}"),
+            |c| write_literal(c, "\u{0085}"),
+            |c| write_literal(c, "\u{000C}"),
+            |c| write_literal(c, "\u{2028}"),
+            |c| write_literal(c, "\u{2029}"),
+        ])
+    }
 }
 
 // ws := bom | unicode-space | multi-line-comment
