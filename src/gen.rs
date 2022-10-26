@@ -1,7 +1,9 @@
 use std::io;
 use std::io::Write;
 use rand::{Rng, RngCore, Error};
+use rand::seq::SliceRandom;
 use regex_syntax::Parser;
+
 use crate::Configuration;
 
 struct Context<'t, T: Write, R: Rng> {
@@ -246,7 +248,7 @@ fn bare_identifier<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usiz
 //Hax: To avoid generating one of the keywords (true|false|null), we don't use 'u' or 'l'
 fn identifier_char<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
     return if ctx.conf.ascii_only {
-        write_rand_re(ctx,"[-+0-9A-Za-km-tv-z]", 1)
+        write_rand_re(ctx, "[-+0-9A-Za-km-tv-z]", 1)
     } else {
         write_rand_re(ctx,
                       "[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
@@ -260,7 +262,7 @@ fn identifier_char<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usiz
 
 fn identifier_char_minus_digit<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
     return if ctx.conf.ascii_only {
-        write_rand_re(ctx,"[-+A-Za-km-tv-z]", 1)
+        write_rand_re(ctx, "[-+A-Za-km-tv-z]", 1)
     } else {
         write_rand_re(ctx,
                       "[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
@@ -398,7 +400,7 @@ fn character<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
                 write_rand_re(c, "[a-zA-Z0-9 .,;!@\\#\\$%\\^&*()]", 1)
             } else {
                 write_rand_re(c, "[^\\\\\"]", 1)
-            }
+            };
         }
     ])
 }
@@ -444,7 +446,7 @@ fn raw_string_quotes<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<us
                 write_rand_re(c, "\\w*", c.conf.string_len_max)
             } else {
                 write_rand_re(c, ".*", c.conf.string_len_max)
-            }
+            };
         },
         |c| write_literal(c, "\""),
     ])
@@ -586,7 +588,7 @@ fn newline<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
             |c| write_literal(c, "\u{2028}"),
             |c| write_literal(c, "\u{2029}"),
         ])
-    }
+    };
 }
 
 // ws := bom | unicode-space | multi-line-comment
@@ -646,7 +648,7 @@ fn single_line_comment<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<
                 write_rand_re(c, "\\w+", c.conf.comment_len_max)
             } else {
                 write_rand_re(c, "[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", c.conf.comment_len_max)
-            }
+            };
         },
         newline
     ]);
@@ -675,48 +677,60 @@ fn multi_line_comment<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<u
 
     result
 }
+/*
+ */
+
 
 // commented-block := '*/' | (multi-line-comment | '*' | '/' | [^*/]+) commented-block
-fn commented_block<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    select(ctx, &[
-        |c| write_literal(c, "*/"),
-        |c| concat(c, &[
+fn commented_block<'t, T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
+    ctx: &mut Context<T, R>
+) -> io::Result<usize> {
+    select(vec![
+        write_literal("*/"),
+        concat(vec![
             |c| {
                 return if c.conf.ascii_only {
-                    select(c, &[
-                        |c| write_rand_re(c, "\\*\\w", 1),
-                        |c| write_rand_re(c, "/\\w", 1),
-                        |c| write_rand_re(c, "\\w+", c.conf.comment_len_max),
-                        |c| multi_line_comment(c)
+                    select(vec![
+                        write_rand_re("\\*\\w", 1),
+                        write_rand_re("/\\w", 1),
+                        write_rand_re("\\w+", c.conf.comment_len_max),
+                        multi_line_comment,
                     ])
                 } else {
-                    select(c, &[
-                        |c| write_rand_re(c, "\\*[^/]", 1),
-                        |c| write_rand_re(c, "/[^*]", 1),
-                        |c| write_rand_re(c, "[^*/]+", c.conf.comment_len_max),
-                        |c| multi_line_comment(c)
+                    select(vec![
+                        write_rand_re("\\*[^/]", 1),
+                        write_rand_re("/[^*]", 1),
+                        write_rand_re("[^*/]+", c.conf.comment_len_max),
+                        multi_line_comment,
                     ])
-                }
+                };
             },
-            commented_block
-        ])
-    ])
+            commented_block,
+        ]),
+    ])(ctx)
 }
 
-fn write_literal<T: Write, R: Rng>(ctx: &mut Context<T, R>, s: &str) -> io::Result<usize> {
-    ctx.write(s.as_bytes())
+
+
+fn write_literal<T: Write, R: Rng>(
+    s: &str
+) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> + '_ {
+    move |c| c.write(s.as_bytes())
 }
 
-fn write_rand_unicode_hex<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    let codepoint: i32 = ctx.gen_range(1..=0x10FFFF);
-    write_literal(ctx, &format!("{:#x}", codepoint)[2..]) //Need to slice off the '0x'
+fn write_rand_unicode_hex<T: Write, R: Rng>() -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
+    |c| {
+        write_literal(&format!("{:#x}", c.gen_range(1..=0x10FFFF))[2..])(c) //Need to slice off the '0x'
+    }
 }
 
 fn write_rand_re<T: Write, R: Rng>(
-    ctx: &mut Context<T, R>, pattern: &str, rep: u32,
-) -> io::Result<usize> {
-    let s = rand_re(ctx, pattern, rep);
-    ctx.write(s.as_bytes())
+    pattern: &str, rep: u32,
+) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> + '_ {
+    move |c| {
+        let s = rand_re(c, pattern, rep);
+        c.write(s.as_bytes())
+    }
 }
 
 fn rand_re<T: Write, R: Rng>(ctx: &mut Context<T, R>, pattern: &str, rep: u32) -> String {
@@ -725,52 +739,57 @@ fn rand_re<T: Write, R: Rng>(ctx: &mut Context<T, R>, pattern: &str, rep: u32) -
     ctx.sample(re)
 }
 
-fn maybe<T: Write, R: Rng>(
-    ctx: &mut Context<T, R>,
-    func: fn(&mut Context<T, R>) -> io::Result<usize>,
-) -> io::Result<usize> {
-    let rnd: f32 = ctx.gen();
-    return if rnd > 0.5 {
-        func(ctx)
-    } else {
-        Ok(0)
-    };
-}
-
-fn repeat<T: Write, R: Rng>(
-    ctx: &mut Context<T, R>, min_times: u32, max_times: u32,
-    func: fn(&mut Context<T, R>) -> io::Result<usize>,
-) -> io::Result<usize> {
-    let times = ctx.gen_range(min_times..max_times + 1);
-    let mut size = 0;
-    for _ in 0..times {
-        match func(ctx) {
-            Err(e) => return Err(e),
-            Ok(s) => size += s
-        }
+fn maybe<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
+    func: F,
+) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
+    move |c| {
+        let rnd: f32 = c.gen();
+        return if rnd > 0.5 {
+            func(c)
+        } else {
+            Ok(0)
+        };
     }
-
-    Ok(size)
 }
 
-fn select<T: Write, R: Rng>(
-    ctx: &mut Context<T, R>, options: &[fn(&mut Context<T, R>) -> io::Result<usize>],
-) -> io::Result<usize> {
-    let idx: usize = ctx.gen_range(0..options.len());
-    options[idx](ctx)
-}
-
-fn concat<T: Write, R: Rng>(
-    ctx: &mut Context<T, R>,
-    calls: &[fn(&mut Context<T, R>) -> io::Result<usize>],
-) -> io::Result<usize> {
-    let mut size = 0;
-    for call in calls {
-        match call(ctx) {
-            Err(e) => return Err(e),
-            Ok(s) => size += s,
+fn repeat<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
+    func: F,
+    min_times: u32, max_times: u32,
+) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
+    move |c| {
+        let times = c.gen_range(min_times..=max_times);
+        let mut size = 0;
+        for _ in 0..times {
+            match func(c) {
+                Err(e) => return Err(e),
+                Ok(s) => size += s
+            }
         }
-    }
 
-    Ok(size)
+        Ok(size)
+    }
+}
+
+fn select<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
+    options: Vec<F>
+) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
+    move |c| {
+        options.choose(c.rng).unwrap()(c)
+    }
+}
+
+fn concat<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
+    calls: Vec<F>,
+) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
+    move |c| {
+        let mut size = 0;
+        for call in calls.iter() {
+            match call(c) {
+                Err(e) => return Err(e),
+                Ok(s) => size += s,
+            }
+        }
+
+        Ok(size)
+    }
 }
