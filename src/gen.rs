@@ -45,9 +45,15 @@ impl<'t, T: Write, R: Rng> Context<'t, T, R> {
     fn get_regex_parser(&self) -> Parser {
         regex_syntax::ParserBuilder::new().unicode(!self.conf.ascii_only).build()
     }
+
+    fn write_debug(&mut self, s: &str) {
+        if self.conf.debug {
+            self.out.write(s.as_bytes()).unwrap();
+        }
+    }
 }
 
-pub fn document<'t, T: Write, R: Rng>(out: &mut T, rng: &mut R, conf: &Configuration) -> io::Result<usize> {
+pub fn document<'t, T: Write + 'static, R: Rng + 'static>(out: &mut T, rng: &mut R, conf: &Configuration) -> io::Result<usize> {
     let ctx: &mut Context<T, R> = &mut Context {
         conf,
         out,
@@ -55,682 +61,665 @@ pub fn document<'t, T: Write, R: Rng>(out: &mut T, rng: &mut R, conf: &Configura
         depth: 0,
     };
 
-    nodes(ctx)
+    let result = nodes()(ctx);
+    ctx.flush().unwrap();
+    result
 }
 
 // nodes := linespace* (node nodes?)? linespace*
-fn nodes<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.depth > ctx.conf.depth_max {
-        return Ok(0);
-    }
+fn nodes<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        if ctx.depth > ctx.conf.depth_max {
+            return Ok(0);
+        }
 
-    if ctx.conf.debug {
-        write_literal(ctx, "<NODES>").unwrap();
-    }
+        ctx.write_debug("<NODES>");
 
-    ctx.depth += 1;
-    let result = concat(ctx, &[
-        |c| repeat(c, 0, c.conf.blank_lines_max, linespace),
-        |c| repeat(c, 0, c.conf.nodes_per_child_max, node),
-        |c| repeat(c, 0, c.conf.blank_lines_max, linespace),
-    ]);
-    ctx.depth -= 1;
+        ctx.depth += 1;
+        let result = concat(vec![
+            repeat(linespace(), 0, ctx.conf.blank_lines_max),
+            repeat(node(), 0, ctx.conf.nodes_per_child_max),
+            repeat(linespace(), 0, ctx.conf.blank_lines_max),
+        ])(ctx);
+        ctx.depth -= 1;
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</NODES>").unwrap();
-    }
+        ctx.write_debug("</NODES>");
 
-    result
+        result
+    })
 }
 
 // node := ('/-' node-space*)? type? identifier (node-space+ node-prop-or-arg)* (node-space* node-children ws*)? node-space* node-terminator
-fn node<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<NODE>").unwrap();
-    }
+fn node<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<NODE>");
+        let result = concat(vec![
+            maybe(concat(vec![
+                write_literal("/-"),
+                repeat(node_space(), 0, ctx.conf.extra_space_max),
+            ])),
+            maybe(type_rule()),
+            identifier(),
+            repeat(concat(vec![
+                repeat(node_space(), 1, ctx.conf.extra_space_max),
+                node_prop_or_arg(),
+            ]), 0, ctx.conf.props_or_args_max),
+            maybe(concat(vec![
+                repeat(node_space(), 0, ctx.conf.extra_space_max),
+                node_children(),
+                repeat(ws(), 0, ctx.conf.extra_space_max),
+            ])),
+            repeat(node_space(), 0, ctx.conf.extra_space_max),
+            node_terminator(),
+        ])(ctx);
 
-    let result = concat(ctx, &[
-        |c| maybe(c, |c| concat(c, &[
-            |c| write_literal(c, "/-"),
-            |c| repeat(c, 0, c.conf.extra_space_max, node_space)
-        ])),
-        |c| maybe(c, type_rule),
-        identifier,
-        |c| repeat(c, 0, c.conf.props_or_args_max,
-                   |c| concat(c, &[
-                       |c| repeat(c, 1, c.conf.extra_space_max, node_space),
-                       node_prop_or_arg
-                   ])),
-        |c| maybe(c, |c| concat(c, &[
-            |c| repeat(c, 0, c.conf.extra_space_max, node_space),
-            node_children,
-            |c| repeat(c, 0, c.conf.extra_space_max, ws),
-        ])),
-        |c| repeat(c, 0, c.conf.extra_space_max, node_space),
-        node_terminator
-    ]);
-
-    if ctx.conf.debug {
-        write_literal(ctx, "</NODE>").unwrap();
-    }
-
-    result
+        ctx.write_debug("</NODE>");
+        result
+    })
 }
 
 // node-prop-or-arg := ('/-' node-space*)? (prop | value)
-fn node_prop_or_arg<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<NODE-PROP-OR-ARG>").unwrap();
-    }
+fn node_prop_or_arg<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<NODE-PROP-OR-ARG>");
 
-    let result = concat(ctx, &[
-        |c| maybe(c, |c| concat(c, &[
-            |c| write_literal(c, "/-"),
-            |c| repeat(c, 0, c.conf.extra_space_max, node_space)
-        ])),
-        |c| select(c, &[prop, value])
-    ]);
+        let result = concat(vec![
+            maybe(concat(vec![
+                write_literal("/-"),
+                repeat(node_space(), 0, ctx.conf.extra_space_max)
+            ])),
+            select(vec![prop(), value()])
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</NODE-PROP-OR-ARG>").unwrap();
-    }
+        ctx.write_debug("</NODE-PROP-OR-ARG>");
 
-    result
+        result
+    })
 }
 
 // node-children := ('/-' node-space*)? {' nodes '}'
-fn node_children<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<NODE-CHILDREN>").unwrap();
-    }
+fn node_children<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<NODE-CHILDREN>");
 
-    let result = concat(ctx, &[
-        |c| maybe(c, |c| concat(c, &[
-            |c| write_literal(c, "/-"),
-            |c| repeat(c, 0, c.conf.extra_space_max, node_space)
-        ])),
-        |c| write_literal(c, "{"),
-        nodes,
-        |c| write_literal(c, "}")
-    ]);
+        let result = concat(vec![
+            maybe(concat(vec![
+                write_literal("/-"),
+                repeat(node_space(), 0, ctx.conf.extra_space_max),
+            ])),
+            write_literal("{"),
+            nodes(),
+            write_literal("}"),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</NODE-CHILDREN>").unwrap();
-    }
+        ctx.write_debug("</NODE-CHILDREN>");
 
-    result
+        result
+    })
 }
 
 // node-space := ws* escline ws* | ws+
-fn node_space<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<NODE-SPACE>").unwrap();
-    }
+fn node_space<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<NODE-SPACE>");
 
-    let result = select(ctx, &[
-        |c| concat(c, &[
-            |c| repeat(c, 0, c.conf.extra_space_max, ws),
-            escline,
-            |c| repeat(c, 0, c.conf.extra_space_max, ws),
-        ]),
-        |c| repeat(c, 1, c.conf.extra_space_max, ws),
-    ]);
+        let result = select(vec![
+            concat(vec![
+                repeat(ws(), 0, ctx.conf.extra_space_max),
+                escline(),
+                repeat(ws(), 0, ctx.conf.extra_space_max),
+            ]),
+            repeat(ws(), 1, ctx.conf.extra_space_max),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</NODE-CHILDREN>").unwrap();
-    }
+        ctx.write_debug("</NODE-CHILDREN>");
 
-    result
+        result
+    })
 }
 
 // node-terminator := single-line-comment | newline | ';' | eof
-fn node_terminator<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<NODE-TERMINATOR>").unwrap();
-    }
+fn node_terminator<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<NODE-TERMINATOR>");
 
-    let result = select(ctx, &[
-        single_line_comment,
-        newline,
-        |c| write_literal(c, ";")
-    ]);
+        let result = select(vec![
+            single_line_comment(),
+            newline(),
+            write_literal(";"),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</NODE-TERMINATOR>").unwrap();
-    }
+        ctx.write_debug("</NODE-TERMINATOR>");
 
-    result
+        result
+    })
 }
 
 // identifier := string | bare-identifier
-fn identifier<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<IDENTIFIER>").unwrap();
-    }
+fn identifier<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<IDENTIFIER>");
 
-    let result = select(ctx, &[string_rule, bare_identifier]);
+        let result = select(vec![string_rule(), bare_identifier()])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</IDENTIFIER>").unwrap();
-    }
+        ctx.write_debug("</IDENTIFIER>");
 
-    result
+        result
+    })
 }
 
 // bare-identifier := ((identifier-char - digit - sign) identifier-char*| sign ((identifier-char - digit) identifier-char*)?) - keyword
-fn bare_identifier<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<BARE-IDENTIFIER>").unwrap();
-    }
+fn bare_identifier<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<BARE-IDENTIFIER>");
 
-    let result = select(ctx, &[
-        |c| concat(c, &[
-            identifier_char_minus_digit_and_sign,
-            |c| repeat(c, 0, c.conf.identifier_len_max - 1, identifier_char)
-        ]),
-        |c| concat(c, &[
-            sign,
-            |c| maybe(c, |c| concat(c, &[
-                identifier_char_minus_digit,
-                |c| repeat(c, 0, c.conf.identifier_len_max - 1, identifier_char)
-            ]))
-        ])
-    ]);
+        let result = select(vec![
+            concat(vec![
+                identifier_char_minus_digit_and_sign(),
+                repeat(identifier_char(), 0, ctx.conf.identifier_len_max - 1),
+            ]),
+            concat(vec![
+                sign(),
+                maybe(concat(vec![
+                    identifier_char_minus_digit(),
+                    repeat(identifier_char(), 0, ctx.conf.identifier_len_max - 1),
+                ])),
+            ]),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</BARE-IDENTIFIER>").unwrap();
-    }
+        ctx.write_debug("</BARE-IDENTIFIER>");
 
-    result
+        result
+    })
 }
 
 // identifier-char := unicode - linespace - [\/(){}<>;[]=,"]
 //Hax: To avoid generating one of the keywords (true|false|null), we don't use 'u' or 'l'
-fn identifier_char<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    return if ctx.conf.ascii_only {
-        write_rand_re(ctx, "[-+0-9A-Za-km-tv-z]", 1)
-    } else {
-        write_rand_re(ctx,
-                      "[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
-                      \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                      \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                      \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                      \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                      \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
-    };
+fn identifier_char<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        return if ctx.conf.ascii_only {
+            write_rand_re("[-+0-9A-Za-km-tv-z]", 1)(ctx)
+        } else {
+            write_rand_re("[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
+                          \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                          \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                          \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                          \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)(ctx)
+        };
+    })
 }
 
-fn identifier_char_minus_digit<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    return if ctx.conf.ascii_only {
-        write_rand_re(ctx, "[-+A-Za-km-tv-z]", 1)
-    } else {
-        write_rand_re(ctx,
-                      "[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
-                      \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                      \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                      \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                      \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                      \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
-    };
+fn identifier_char_minus_digit<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        return if ctx.conf.ascii_only {
+            write_rand_re("[-+A-Za-km-tv-z]", 1)(ctx)
+        } else {
+            write_rand_re("[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
+                          \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                          \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                          \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                          \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)(ctx)
+        };
+    })
 }
 
-fn identifier_char_minus_digit_and_sign<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    return if ctx.conf.ascii_only {
-        write_rand_re(ctx,
-                      "[A-Za-km-tv-z]", 1)
-    } else {
-        write_rand_re(ctx,
-                      "[^-+ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
-                      \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                      \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                      \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                      \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                      \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
-    };
+fn identifier_char_minus_digit_and_sign<T: Write, R: Rng>()
+    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        return if ctx.conf.ascii_only {
+            write_rand_re("[A-Za-km-tv-z]", 1)(ctx)
+        } else {
+            write_rand_re("[^-+ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
+                          \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                          \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                          \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                          \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)(ctx)
+        };
+    })
 }
 
 // keyword := boolean | 'null'
-fn keyword<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<KEYWORD>").unwrap();
-    }
+fn keyword<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<KEYWORD>");
 
-    let result = select(ctx, &[
-        |c| write_literal(c, "true"),
-        |c| write_literal(c, "false"),
-        |c| write_literal(c, "null"),
-    ]);
+        let result = select(vec![
+            write_literal("true"),
+            write_literal("false"),
+            write_literal("null"),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</KEYWORD>").unwrap();
-    }
+        ctx.write_debug("</KEYWORD>");
 
-    result
+        result
+    })
 }
 
 // prop := identifier '=' value
-fn prop<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<PROP>").unwrap();
-    }
+fn prop<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<PROP>");
 
-    let result = concat(ctx, &[
-        identifier,
-        |c| write_literal(c, "="),
-        value
-    ]);
+        let result = concat(vec![
+            identifier(),
+            write_literal("="),
+            value(),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</PROP>").unwrap();
-    }
+        ctx.write_debug("</PROP>");
 
-    result
+        result
+    })
 }
 
 // value := type? (string | number | keyword)
-fn value<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<VALUE>").unwrap();
-    }
+fn value<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<VALUE>");
 
-    let result = concat(ctx, &[
-        |c| maybe(c, type_rule),
-        |c| select(c, &[string_rule, number, keyword])
-    ]);
+        let result = concat(vec![
+            maybe(type_rule()),
+            select(vec![string_rule(), number(), keyword()]),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</VALUE>").unwrap();
-    }
+        ctx.write_debug("</VALUE>");
 
-    result
+        result
+    })
 }
 
 // type := '(' identifier ')'
-fn type_rule<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<TYPE>").unwrap();
-    }
+fn type_rule<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<TYPE>");
 
-    let result = concat(ctx, &[
-        |c| write_literal(c, "("),
-        identifier,
-        |c| write_literal(c, ")"),
-    ]);
+        let result = concat(vec![
+            write_literal("("),
+            identifier(),
+            write_literal(")"),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</TYPE>").unwrap();
-    }
+        ctx.write_debug("</TYPE>");
 
-    result
+        result
+    })
 }
 
 // string := raw-string | escaped-string
-fn string_rule<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<STRING>").unwrap();
-    }
+fn string_rule<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<STRING>");
 
-    let result = select(ctx, &[raw_string, escaped_string]);
+        let result = select(vec![raw_string(), escaped_string()])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</STRING>").unwrap();
-    }
+        ctx.write_debug("</STRING>");
 
-    result
+        result
+    })
 }
 
 // escaped-string := '"' character* '"'
-fn escaped_string<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| write_literal(c, "\""),
-        |c| repeat(c, 0, c.conf.string_len_max, character),
-        |c| write_literal(c, "\""),
-    ])
+fn escaped_string<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            write_literal("\""),
+            repeat(character(), 0, ctx.conf.string_len_max),
+            write_literal("\""),
+        ])(ctx)
+    })
 }
 
 // character := '\' escape | [^\"]
-fn character<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    select(ctx, &[
-        |c| concat(c, &[
-            |c| write_literal(c, "\\"),
-            escape
-        ]),
-        |c| {
-            return if c.conf.ascii_only {
-                write_rand_re(c, "[a-zA-Z0-9 .,;!@\\#\\$%\\^&*()]", 1)
-            } else {
-                write_rand_re(c, "[^\\\\\"]", 1)
-            };
-        }
-    ])
+fn character<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        select(vec![
+            concat(vec![
+                write_literal("\\"),
+                escape(),
+            ]),
+            Box::new(|c| {
+                return if c.conf.ascii_only {
+                    write_rand_re("[a-zA-Z0-9 .,;!@\\#\\$%\\^&*()]", 1)(c)
+                } else {
+                    write_rand_re("[^\\\\\"]", 1)(c)
+                };
+            }),
+        ])(ctx)
+    })
 }
 
 // escape := ["\\/bfnrt] | 'u{' hex-digit{1, 6} '}'
-fn escape<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    select(ctx, &[
-        |c| write_rand_re(c, "[\"\\\\/bfnrt]", 1),
-        |c| concat(c, &[
-            |c| write_literal(c, "u{"),
-            |c| write_rand_unicode_hex(c),
-            |c| write_literal(c, "}"),
-        ])
-    ])
+fn escape<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        select(vec![
+            write_rand_re("[\"\\\\/bfnrt]", 1),
+            concat(vec![
+                write_literal("u{"),
+                write_rand_unicode_hex(),
+                write_literal("}"),
+            ]),
+        ])(ctx)
+    })
 }
 
 // raw-string := 'r' raw-string-hash
-fn raw_string<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| write_literal(c, "r"),
-        raw_string_hash
-    ])
+fn raw_string<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            write_literal("r"),
+            raw_string_hash(),
+        ])(ctx)
+    })
 }
 
 // raw-string-hash := '#' raw-string-hash '#' | raw-string-quotes
-fn raw_string_hash<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    select(ctx, &[
-        |c| concat(c, &[
-            |c| write_literal(c, "#"),
-            raw_string_hash,
-            |c| write_literal(c, "#"),
-        ]),
-        raw_string_quotes
-    ])
+fn raw_string_hash<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        select(vec![
+            concat(vec![
+                write_literal("#"),
+                raw_string_hash(),
+                write_literal("#"),
+            ]),
+            raw_string_quotes(),
+        ])(ctx)
+    })
 }
 
 // raw-string-quotes := '"' .* '"'
-fn raw_string_quotes<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| write_literal(c, "\""),
-        |c| {
-            return if c.conf.ascii_only {
-                write_rand_re(c, "\\w*", c.conf.string_len_max)
-            } else {
-                write_rand_re(c, ".*", c.conf.string_len_max)
-            };
-        },
-        |c| write_literal(c, "\""),
-    ])
+fn raw_string_quotes<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            write_literal("\""),
+            Box::new(|c| {
+                return if c.conf.ascii_only {
+                    write_rand_re("\\w*", c.conf.string_len_max)(c)
+                } else {
+                    write_rand_re(".*", c.conf.string_len_max)(c)
+                };
+            }),
+            write_literal("\""),
+        ])(ctx)
+    })
 }
 
 // number := decimal | hex | octal | binary
-fn number<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<NUMBER>").unwrap();
-    }
+fn number<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<NUMBER>");
 
-    let result = select(ctx, &[decimal, hex, octal, binary]);
+        let result = select(vec![decimal(), hex(), octal(), binary()])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</NUMBER>").unwrap();
-    }
+        ctx.write_debug("</NUMBER>");
 
-    result
+        result
+    })
 }
 
 // decimal := sign? integer ('.' integer)? exponent?
-fn decimal<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| maybe(c, sign),
-        integer,
-        |c| maybe(c, |c| concat(c, &[
-            |c| write_literal(c, "."),
-            integer
-        ])),
-        |c| maybe(c, exponent)
-    ])
+fn decimal<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            maybe(sign()),
+            integer(),
+            maybe(concat(vec![
+                write_literal("."),
+                integer(),
+            ])),
+            maybe(exponent()),
+        ])(ctx)
+    })
 }
 
 // exponent := ('e' | 'E') sign? integer
-fn exponent<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| select(c, &[
-            |c| write_literal(c, "e"),
-            |c| write_literal(c, "E"),
-        ]),
-        |c| maybe(c, sign),
-        integer
-    ])
+fn exponent<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            select(vec![
+                write_literal("e"),
+                write_literal("E"),
+            ]),
+            maybe(sign()),
+            integer(),
+        ])(ctx)
+    })
 }
 
 // integer := digit (digit | '_')*
-fn integer<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    write_rand_re(ctx, "[0-9][0-9_]*", ctx.conf.num_len_max)
+fn integer<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| write_rand_re("[0-9][0-9_]*", ctx.conf.num_len_max)(ctx))
 }
 
 // sign := '+' | '-'
-fn sign<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    select(ctx, &[
-        |c| write_literal(c, "+"),
-        |c| write_literal(c, "-"),
-    ])
+fn sign<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        select(vec![
+            write_literal("+"),
+            write_literal("-"),
+        ])(ctx)
+    })
 }
 
 // hex := sign? '0x' hex-digit (hex-digit | '_')*
-fn hex<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| maybe(c, sign),
-        |c| write_literal(c, "0x"),
-        |c| write_rand_re(c, "[0-9A-Fa-f][0-9A-Fa-f_]*", c.conf.num_len_max),
-    ])
+fn hex<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            maybe(sign()),
+            write_literal("0x"),
+            write_rand_re("[0-9A-Fa-f][0-9A-Fa-f_]*", ctx.conf.num_len_max),
+        ])(ctx)
+    })
 }
 
 // octal := sign? '0o' [0-7] [0-7_]*
-fn octal<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| maybe(c, sign),
-        |c| write_literal(c, "0o"),
-        |c| write_rand_re(c, "[0-7][0-7_]*", c.conf.num_len_max),
-    ])
+fn octal<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            maybe(sign()),
+            write_literal("0o"),
+            write_rand_re("[0-7][0-7_]*", ctx.conf.num_len_max),
+        ])(ctx)
+    })
 }
 
 // binary := sign? '0b' ('0' | '1') ('0' | '1' | '_')*
-fn binary<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    concat(ctx, &[
-        |c| maybe(c, sign),
-        |c| write_literal(c, "0b"),
-        |c| write_rand_re(c, "[01][01_]*", c.conf.num_len_max),
-    ])
+fn binary<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        concat(vec![
+            maybe(sign()),
+            write_literal("0b"),
+            write_rand_re("[01][01_]*", ctx.conf.num_len_max),
+        ])(ctx)
+    })
 }
 
 // escline := '\\' ws* (single-line-comment | newline)
-fn escline<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<ESCLINE>").unwrap();
-    }
+fn escline<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<ESCLINE>");
 
-    let result = concat(ctx, &[
-        |c| write_literal(c, "\\"),
-        |c| repeat(c, 0, c.conf.extra_space_max, ws),
-        |c| select(c, &[single_line_comment, newline])
-    ]);
+        let result = concat(vec![
+            write_literal("\\"),
+            repeat(ws(), 0, ctx.conf.extra_space_max),
+            select(vec![single_line_comment(), newline()]),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</ESCLINE>").unwrap();
-    }
+        ctx.write_debug("</ESCLINE>");
 
-    result
+        result
+    })
 }
 
 // linespace := newline | ws | single-line-comment
-fn linespace<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<LINESPACE>").unwrap();
-    }
+fn linespace<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<LINESPACE>");
 
-    let result = select(ctx, &[
-        |c| newline(c),
-        |c| ws(c),
-        |c| single_line_comment(c)
-    ]);
+        let result = select(vec![newline(), ws(), single_line_comment()])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</LINESPACE>").unwrap();
-    }
+        ctx.write_debug("</LINESPACE>");
 
-    result
+        result
+    })
 }
 
 // newline := See Table (All line-break white_space)
-fn newline<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    return if ctx.conf.ascii_only {
-        select(ctx, &[
-            |c| write_literal(c, "\u{000D}"),
-            |c| write_literal(c, "\u{000A}"),
-            |c| write_literal(c, "\u{000D}\u{000A}"),
-        ])
-    } else {
-        select(ctx, &[
-            |c| write_literal(c, "\u{000D}"),
-            |c| write_literal(c, "\u{000A}"),
-            |c| write_literal(c, "\u{000D}\u{000A}"),
-            |c| write_literal(c, "\u{0085}"),
-            |c| write_literal(c, "\u{000C}"),
-            |c| write_literal(c, "\u{2028}"),
-            |c| write_literal(c, "\u{2029}"),
-        ])
-    };
+fn newline<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        return if ctx.conf.ascii_only {
+            select(vec![
+                write_literal("\u{000D}"),
+                write_literal("\u{000A}"),
+                write_literal("\u{000D}\u{000A}"),
+            ])(ctx)
+        } else {
+            select(vec![
+                write_literal("\u{000D}"),
+                write_literal("\u{000A}"),
+                write_literal("\u{000D}\u{000A}"),
+                write_literal("\u{0085}"),
+                write_literal("\u{000C}"),
+                write_literal("\u{2028}"),
+                write_literal("\u{2029}"),
+            ])(ctx)
+        };
+    })
 }
 
 // ws := bom | unicode-space | multi-line-comment
-fn ws<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<WS>").unwrap();
-    }
+fn ws<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<WS>");
 
-    let result = select(ctx, &[bom, unicode_space, multi_line_comment]);
+        let result = select(vec![bom(), unicode_space(), multi_line_comment()])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</WS>").unwrap();
-    }
+        ctx.write_debug("</WS>");
 
-    result
+        result
+    })
 }
 
 // bom := '\u{FEFF}'
-fn bom<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    write_literal(ctx, "\u{FEFF}")
+fn bom<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| write_literal("\u{FEFF}")(ctx))
 }
 
 // unicode-space := See Table (All White_Space unicode characters which are not `newline`)
-fn unicode_space<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    select(ctx, &[
-        |c| write_literal(c, "\u{0009}"),
-        |c| write_literal(c, "\u{0020}"),
-        |c| write_literal(c, "\u{00A0}"),
-        |c| write_literal(c, "\u{1680}"),
-        |c| write_literal(c, "\u{2000}"),
-        |c| write_literal(c, "\u{2001}"),
-        |c| write_literal(c, "\u{2002}"),
-        |c| write_literal(c, "\u{2003}"),
-        |c| write_literal(c, "\u{2004}"),
-        |c| write_literal(c, "\u{2005}"),
-        |c| write_literal(c, "\u{2006}"),
-        |c| write_literal(c, "\u{2007}"),
-        |c| write_literal(c, "\u{2008}"),
-        |c| write_literal(c, "\u{2009}"),
-        |c| write_literal(c, "\u{200A}"),
-        |c| write_literal(c, "\u{202F}"),
-        |c| write_literal(c, "\u{205F}"),
-        |c| write_literal(c, "\u{3000}"),
-    ])
+fn unicode_space<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        select(vec![
+            write_literal("\u{0009}"),
+            write_literal("\u{0020}"),
+            write_literal("\u{00A0}"),
+            write_literal("\u{1680}"),
+            write_literal("\u{2000}"),
+            write_literal("\u{2001}"),
+            write_literal("\u{2002}"),
+            write_literal("\u{2003}"),
+            write_literal("\u{2004}"),
+            write_literal("\u{2005}"),
+            write_literal("\u{2006}"),
+            write_literal("\u{2007}"),
+            write_literal("\u{2008}"),
+            write_literal("\u{2009}"),
+            write_literal("\u{200A}"),
+            write_literal("\u{202F}"),
+            write_literal("\u{205F}"),
+            write_literal("\u{3000}"),
+        ])(ctx)
+    })
 }
 
 // single-line-comment := '//' ^newline+ (newline | eof)
-fn single_line_comment<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<SINGLE-LINE-COMMENT>").unwrap();
-    }
+fn single_line_comment<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<SINGLE-LINE-COMMENT>");
 
-    let result = concat(ctx, &[
-        |c| write_literal(c, "//"),
-        |c| {
-            return if c.conf.ascii_only {
-                write_rand_re(c, "\\w+", c.conf.comment_len_max)
-            } else {
-                write_rand_re(c, "[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", c.conf.comment_len_max)
-            };
-        },
-        newline
-    ]);
+        let result = concat(vec![
+            write_literal("//"),
+            Box::new(|c| {
+                return if c.conf.ascii_only {
+                    write_rand_re("\\w+", c.conf.comment_len_max)(c)
+                } else {
+                    write_rand_re("[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", c.conf.comment_len_max)(c)
+                };
+            }),
+            newline(),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</SINGLE-LINE-COMMENT>").unwrap();
-    }
+        ctx.write_debug("</SINGLE-LINE-COMMENT>");
 
-    result
+        result
+    })
 }
 
 // multi-line-comment := '/*' commented-block
-fn multi_line_comment<T: Write, R: Rng>(ctx: &mut Context<T, R>) -> io::Result<usize> {
-    if ctx.conf.debug {
-        write_literal(ctx, "<MULTI-LINE-COMMENT>").unwrap();
-    }
+fn multi_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|ctx| {
+        ctx.write_debug("<MULTI-LINE-COMMENT>");
 
-    let result = concat(ctx, &[
-        |c| write_literal(c, "/*"),
-        |c| commented_block(c)
-    ]);
+        let result = concat(vec![
+            write_literal("/*"),
+            commented_block(),
+        ])(ctx);
 
-    if ctx.conf.debug {
-        write_literal(ctx, "</MULTI-LINE-COMMENT>").unwrap();
-    }
+        ctx.write_debug("</MULTI-LINE-COMMENT>");
 
-    result
+        result
+    })
 }
-/*
- */
-
 
 // commented-block := '*/' | (multi-line-comment | '*' | '/' | [^*/]+) commented-block
-fn commented_block<'t, T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
-    ctx: &mut Context<T, R>
-) -> io::Result<usize> {
-    select(vec![
-        write_literal("*/"),
-        concat(vec![
-            |c| {
-                return if c.conf.ascii_only {
-                    select(vec![
-                        write_rand_re("\\*\\w", 1),
-                        write_rand_re("/\\w", 1),
-                        write_rand_re("\\w+", c.conf.comment_len_max),
-                        multi_line_comment,
-                    ])
-                } else {
-                    select(vec![
-                        write_rand_re("\\*[^/]", 1),
-                        write_rand_re("/[^*]", 1),
-                        write_rand_re("[^*/]+", c.conf.comment_len_max),
-                        multi_line_comment,
-                    ])
-                };
-            },
-            commented_block,
-        ]),
-    ])(ctx)
+fn commented_block<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    return Box::new(|ctx| {
+        select(vec![
+            write_literal("*/"),
+            concat(vec![
+                Box::new(|c| {
+                    return if c.conf.ascii_only {
+                        select(vec![
+                            write_rand_re("\\*\\w", 1),
+                            write_rand_re("/\\w", 1),
+                            write_rand_re("\\w+", c.conf.comment_len_max),
+                            multi_line_comment(),
+                        ])(c)
+                    } else {
+                        select(vec![
+                            write_rand_re("\\*[^/]", 1),
+                            write_rand_re("/[^*]", 1),
+                            write_rand_re("[^*/]+", c.conf.comment_len_max),
+                            multi_line_comment(),
+                        ])(c)
+                    };
+                }),
+                commented_block(),
+            ]),
+        ])(ctx)
+    });
 }
-
-
 
 fn write_literal<T: Write, R: Rng>(
     s: &str
-) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> + '_ {
-    move |c| c.write(s.as_bytes())
+) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + '_> {
+    Box::new(move |c| c.write(s.as_bytes()))
 }
 
-fn write_rand_unicode_hex<T: Write, R: Rng>() -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
-    |c| {
+fn write_rand_unicode_hex<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(|c| {
         write_literal(&format!("{:#x}", c.gen_range(1..=0x10FFFF))[2..])(c) //Need to slice off the '0x'
-    }
+    })
 }
 
 fn write_rand_re<T: Write, R: Rng>(
     pattern: &str, rep: u32,
-) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> + '_ {
-    move |c| {
+) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + '_> {
+    Box::new(move |c| {
         let s = rand_re(c, pattern, rep);
         c.write(s.as_bytes())
-    }
+    })
 }
 
 fn rand_re<T: Write, R: Rng>(ctx: &mut Context<T, R>, pattern: &str, rep: u32) -> String {
@@ -739,24 +728,24 @@ fn rand_re<T: Write, R: Rng>(ctx: &mut Context<T, R>, pattern: &str, rep: u32) -
     ctx.sample(re)
 }
 
-fn maybe<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
-    func: F,
-) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
-    move |c| {
+fn maybe<'t, T: Write + 't, R: Rng + 't>(
+    func: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
+) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+    Box::new(move |c| {
         let rnd: f32 = c.gen();
         return if rnd > 0.5 {
             func(c)
         } else {
             Ok(0)
         };
-    }
+    })
 }
 
-fn repeat<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
-    func: F,
+fn repeat<'t, T: Write + 't, R: Rng + 't>(
+    func: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
     min_times: u32, max_times: u32,
-) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
-    move |c| {
+) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+    Box::new(move |c| {
         let times = c.gen_range(min_times..=max_times);
         let mut size = 0;
         for _ in 0..times {
@@ -767,21 +756,21 @@ fn repeat<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
         }
 
         Ok(size)
-    }
+    })
 }
 
-fn select<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
-    options: Vec<F>
-) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
-    move |c| {
+fn select<'t, T: Write + 't, R: Rng + 't>(
+    options: Vec<Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>>,
+) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+    Box::new(move |c| {
         options.choose(c.rng).unwrap()(c)
-    }
+    })
 }
 
-fn concat<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
-    calls: Vec<F>,
-) -> impl Fn(&mut Context<T, R>) -> io::Result<usize> {
-    move |c| {
+fn concat<'t, T: Write + 't, R: Rng + 't>(
+    calls: Vec<Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>>,
+) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+    Box::new(move |c| {
         let mut size = 0;
         for call in calls.iter() {
             match call(c) {
@@ -791,5 +780,5 @@ fn concat<T: Write, R: Rng, F: Fn(&mut Context<T, R>) -> io::Result<usize>>(
         }
 
         Ok(size)
-    }
+    })
 }
