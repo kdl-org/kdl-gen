@@ -53,6 +53,8 @@ impl<'t, T: Write, R: Rng> Context<'t, T, R> {
     }
 }
 
+type GenFn<T, R> = dyn Fn(&mut Context<T, R>) -> io::Result<usize>;
+
 pub fn document<'t, T: Write + 'static, R: Rng + 'static>(out: &mut T, rng: &mut R, conf: &Configuration) -> io::Result<usize> {
     let ctx: &mut Context<T, R> = &mut Context {
         conf,
@@ -67,7 +69,7 @@ pub fn document<'t, T: Write + 'static, R: Rng + 'static>(out: &mut T, rng: &mut
 }
 
 // nodes := linespace* (node nodes?)? linespace*
-fn nodes<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn nodes<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         if ctx.depth > ctx.conf.depth_max {
             return Ok(0);
@@ -90,7 +92,7 @@ fn nodes<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R
 }
 
 // node := ('/-' node-space*)? type? identifier (node-space+ node-prop-or-arg)* (node-space* node-children ws*)? node-space* node-terminator
-fn node<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn node<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<NODE>");
         let result = concat(vec![
@@ -119,16 +121,16 @@ fn node<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>
 }
 
 // node-prop-or-arg := ('/-' node-space*)? (prop | value)
-fn node_prop_or_arg<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn node_prop_or_arg<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<NODE-PROP-OR-ARG>");
 
         let result = concat(vec![
             maybe(concat(vec![
                 write_literal("/-"),
-                repeat(node_space(), 0, ctx.conf.extra_space_max)
+                repeat(node_space(), 0, ctx.conf.extra_space_max),
             ])),
-            select(vec![prop(), value()])
+            select(vec![prop(), value()]),
         ])(ctx);
 
         ctx.write_debug("</NODE-PROP-OR-ARG>");
@@ -138,7 +140,7 @@ fn node_prop_or_arg<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut C
 }
 
 // node-children := ('/-' node-space*)? {' nodes '}'
-fn node_children<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn node_children<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<NODE-CHILDREN>");
 
@@ -159,7 +161,7 @@ fn node_children<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Cont
 }
 
 // node-space := ws* escline ws* | ws+
-fn node_space<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn node_space<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<NODE-SPACE>");
 
@@ -179,7 +181,7 @@ fn node_space<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context
 }
 
 // node-terminator := single-line-comment | newline | ';' | eof
-fn node_terminator<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn node_terminator<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<NODE-TERMINATOR>");
 
@@ -196,7 +198,7 @@ fn node_terminator<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
 }
 
 // identifier := string | bare-identifier
-fn identifier<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn identifier<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<IDENTIFIER>");
 
@@ -209,7 +211,7 @@ fn identifier<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context
 }
 
 // bare-identifier := ((identifier-char - digit - sign) identifier-char*| sign ((identifier-char - digit) identifier-char*)?) - keyword
-fn bare_identifier<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn bare_identifier<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<BARE-IDENTIFIER>");
 
@@ -236,8 +238,7 @@ fn bare_identifier<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
 // identifier-char := unicode - linespace - [\/(){}<>;[]=,"]
 //Hax: To avoid generating one of the keywords (true|false|null), we don't use 'u' or 'l'
 fn identifier_char<T: Write + 'static, R: Rng + 'static>()
-    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
-
+    -> Box<GenFn<T, R>> {
     pick_ascii_or_utf8(
         write_rand_re("[-+0-9A-Za-km-tv-z]", 1),
         write_rand_re("[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
@@ -245,13 +246,12 @@ fn identifier_char<T: Write + 'static, R: Rng + 'static>()
                           \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
                           \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
                           \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1),
     )
 }
 
 fn identifier_char_minus_digit<T: Write + 'static, R: Rng + 'static>()
-    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
-
+    -> Box<GenFn<T, R>> {
     pick_ascii_or_utf8(
         write_rand_re("[-+A-Za-km-tv-z]", 1),
         write_rand_re("[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
@@ -259,12 +259,12 @@ fn identifier_char_minus_digit<T: Write + 'static, R: Rng + 'static>()
                           \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
                           \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
                           \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1),
     )
 }
 
 fn identifier_char_minus_digit_and_sign<T: Write + 'static, R: Rng + 'static>()
-    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    -> Box<GenFn<T, R>> {
     pick_ascii_or_utf8(
         write_rand_re("[A-Za-km-tv-z]", 1),
         write_rand_re("[^-+ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
@@ -272,12 +272,12 @@ fn identifier_char_minus_digit_and_sign<T: Write + 'static, R: Rng + 'static>()
                           \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
                           \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
                           \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1),
     )
 }
 
 // keyword := boolean | 'null'
-fn keyword<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn keyword<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<KEYWORD>");
 
@@ -294,7 +294,7 @@ fn keyword<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<u
 }
 
 // prop := identifier '=' value
-fn prop<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn prop<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<PROP>");
 
@@ -311,7 +311,7 @@ fn prop<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>
 }
 
 // value := type? (string | number | keyword)
-fn value<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn value<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<VALUE>");
 
@@ -327,7 +327,7 @@ fn value<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R
 }
 
 // type := '(' identifier ')'
-fn type_rule<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn type_rule<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<TYPE>");
 
@@ -344,7 +344,7 @@ fn type_rule<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<
 }
 
 // string := raw-string | escaped-string
-fn string_rule<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn string_rule<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<STRING>");
 
@@ -357,7 +357,7 @@ fn string_rule<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Contex
 }
 
 // escaped-string := '"' character* '"'
-fn escaped_string<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn escaped_string<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             write_literal("\""),
@@ -368,7 +368,7 @@ fn escaped_string<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Con
 }
 
 // character := '\' escape | [^\"]
-fn character<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn character<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         select(vec![
             concat(vec![
@@ -377,14 +377,14 @@ fn character<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<
             ]),
             pick_ascii_or_utf8(
                 write_rand_re("[a-zA-Z0-9 .,;!@\\#\\$%\\^&*()]", 1),
-                write_rand_re("[^\\\\\"]", 1)
+                write_rand_re("[^\\\\\"]", 1),
             ),
         ])(ctx)
     })
 }
 
 // escape := ["\\/bfnrt] | 'u{' hex-digit{1, 6} '}'
-fn escape<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn escape<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         select(vec![
             write_rand_re("[\"\\\\/bfnrt]", 1),
@@ -398,7 +398,7 @@ fn escape<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, 
 }
 
 // raw-string := 'r' raw-string-hash
-fn raw_string<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn raw_string<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             write_literal("r"),
@@ -408,7 +408,7 @@ fn raw_string<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context
 }
 
 // raw-string-hash := '#' raw-string-hash '#' | raw-string-quotes
-fn raw_string_hash<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn raw_string_hash<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         select(vec![
             concat(vec![
@@ -422,7 +422,7 @@ fn raw_string_hash<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
 }
 
 // raw-string-quotes := '"' .* '"'
-fn raw_string_quotes<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn raw_string_quotes<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             write_literal("\""),
@@ -435,7 +435,7 @@ fn raw_string_quotes<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut 
 }
 
 // number := decimal | hex | octal | binary
-fn number<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn number<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<NUMBER>");
 
@@ -448,7 +448,7 @@ fn number<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, 
 }
 
 // decimal := sign? integer ('.' integer)? exponent?
-fn decimal<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn decimal<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             maybe(sign()),
@@ -463,7 +463,7 @@ fn decimal<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T,
 }
 
 // exponent := ('e' | 'E') sign? integer
-fn exponent<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn exponent<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             select(vec![
@@ -477,12 +477,12 @@ fn exponent<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T
 }
 
 // integer := digit (digit | '_')*
-fn integer<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn integer<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| write_rand_re("[0-9][0-9_]*", ctx.conf.num_len_max)(ctx))
 }
 
 // sign := '+' | '-'
-fn sign<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn sign<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         select(vec![
             write_literal("+"),
@@ -492,7 +492,7 @@ fn sign<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usiz
 }
 
 // hex := sign? '0x' hex-digit (hex-digit | '_')*
-fn hex<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn hex<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             maybe(sign()),
@@ -503,7 +503,7 @@ fn hex<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>)
 }
 
 // octal := sign? '0o' [0-7] [0-7_]*
-fn octal<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn octal<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             maybe(sign()),
@@ -514,7 +514,7 @@ fn octal<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R
 }
 
 // binary := sign? '0b' ('0' | '1') ('0' | '1' | '_')*
-fn binary<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn binary<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         concat(vec![
             maybe(sign()),
@@ -525,7 +525,7 @@ fn binary<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, 
 }
 
 // escline := '\\' ws* (single-line-comment | newline)
-fn escline<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn escline<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<ESCLINE>");
 
@@ -542,7 +542,7 @@ fn escline<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T,
 }
 
 // linespace := newline | ws | single-line-comment
-fn linespace<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn linespace<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<LINESPACE>");
 
@@ -556,8 +556,7 @@ fn linespace<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<
 
 // newline := See Table (All line-break white_space)
 fn newline<T: Write + 'static, R: Rng + 'static>()
-    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
-
+    -> Box<GenFn<T, R>> {
     pick_ascii_or_utf8(
         select(vec![
             write_literal("\u{000D}"),
@@ -572,12 +571,12 @@ fn newline<T: Write + 'static, R: Rng + 'static>()
             write_literal("\u{000C}"),
             write_literal("\u{2028}"),
             write_literal("\u{2029}"),
-        ])
+        ]),
     )
 }
 
 // ws := bom | unicode-space | multi-line-comment
-fn ws<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn ws<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<WS>");
 
@@ -590,12 +589,12 @@ fn ws<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) 
 }
 
 // bom := '\u{FEFF}'
-fn bom<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn bom<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| write_literal("\u{FEFF}")(ctx))
 }
 
 // unicode-space := See Table (All White_Space unicode characters which are not `newline`)
-fn unicode_space<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn unicode_space<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         select(vec![
             write_literal("\u{0009}"),
@@ -621,7 +620,7 @@ fn unicode_space<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Re
 }
 
 // single-line-comment := '//' ^newline+ (newline | eof)
-fn single_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn single_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<SINGLE-LINE-COMMENT>");
 
@@ -629,7 +628,7 @@ fn single_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mu
             write_literal("//"),
             pick_ascii_or_utf8(
                 write_rand_re("\\w+", ctx.conf.comment_len_max),
-                write_rand_re("[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", ctx.conf.comment_len_max)
+                write_rand_re("[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", ctx.conf.comment_len_max),
             ),
             newline(),
         ])(ctx);
@@ -641,7 +640,7 @@ fn single_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mu
 }
 
 // multi-line-comment := '/*' commented-block
-fn multi_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn multi_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|ctx| {
         ctx.write_debug("<MULTI-LINE-COMMENT>");
 
@@ -657,7 +656,7 @@ fn multi_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut
 }
 
 // commented-block := '*/' | (multi-line-comment | '*' | '/' | [^*/]+) commented-block
-fn commented_block<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn commented_block<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     return Box::new(|ctx| {
         select(vec![
             write_literal("*/"),
@@ -674,7 +673,7 @@ fn commented_block<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
                         write_rand_re("/[^*]", 1),
                         write_rand_re("[^*/]+", ctx.conf.comment_len_max),
                         multi_line_comment(),
-                    ])
+                    ]),
                 ),
                 commented_block(),
             ]),
@@ -682,33 +681,33 @@ fn commented_block<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
     });
 }
 
-fn write_literal<T: Write, R: Rng>(
-    s: &str
-) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + '_> {
+fn write_literal<T: Write + 'static, R: Rng + 'static>(s: &'static str) -> Box<GenFn<T, R>> {
     Box::new(move |c| c.write(s.as_bytes()))
 }
 
-fn write_rand_unicode_hex<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn write_rand_unicode_hex<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|c| {
-        write_literal(&format!("{:#x}", c.gen_range(1..=0x10FFFF))[2..])(c) //Need to slice off the '0x'
+        let s = format!("{:#x}", c.gen_range(1..=0x10FFFF));
+        c.write(s[2..].as_bytes()) //Need to slice off the '0x'
     })
 }
+
 fn pick_ascii_or_utf8<T: Write + 'static, R: Rng + 'static>(
-    ascii: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
-    unicode: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
-) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    ascii: Box<GenFn<T, R>>,
+    unicode: Box<GenFn<T, R>>,
+) -> Box<GenFn<T, R>> {
     Box::new(move |ctx| {
         return if ctx.conf.ascii_only {
             ascii(ctx)
         } else {
             unicode(ctx)
-        }
+        };
     })
 }
 
-fn write_rand_re<T: Write, R: Rng>(
-    pattern: &str, rep: u32,
-) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + '_> {
+fn write_rand_re<T: Write + 'static, R: Rng + 'static>(
+    pattern: &'static str, rep: u32,
+) -> Box<GenFn<T, R>> {
     Box::new(move |c| {
         let s = rand_re(c, pattern, rep);
         c.write(s.as_bytes())
@@ -721,9 +720,9 @@ fn rand_re<T: Write, R: Rng>(ctx: &mut Context<T, R>, pattern: &str, rep: u32) -
     ctx.sample(re)
 }
 
-fn maybe<'t, T: Write + 't, R: Rng + 't>(
-    func: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
-) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+fn maybe<T: Write + 'static, R: Rng + 'static>(
+    func: Box<GenFn<T, R>>,
+) -> Box<GenFn<T, R>> {
     Box::new(move |c| {
         let rnd: f32 = c.gen();
         return if rnd > 0.5 {
@@ -734,10 +733,10 @@ fn maybe<'t, T: Write + 't, R: Rng + 't>(
     })
 }
 
-fn repeat<'t, T: Write + 't, R: Rng + 't>(
-    func: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
+fn repeat<T: Write + 'static, R: Rng + 'static>(
+    func: Box<GenFn<T, R>>,
     min_times: u32, max_times: u32,
-) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+) -> Box<GenFn<T, R>> {
     Box::new(move |c| {
         let times = c.gen_range(min_times..=max_times);
         let mut size = 0;
@@ -752,17 +751,17 @@ fn repeat<'t, T: Write + 't, R: Rng + 't>(
     })
 }
 
-fn select<'t, T: Write + 't, R: Rng + 't>(
-    options: Vec<Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>>,
-) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+fn select<T: Write + 'static, R: Rng + 'static>(
+    options: Vec<Box<GenFn<T, R>>>,
+) -> Box<GenFn<T, R>> {
     Box::new(move |c| {
         options.choose(c.rng).unwrap()(c)
     })
 }
 
-fn concat<'t, T: Write + 't, R: Rng + 't>(
-    calls: Vec<Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>>,
-) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize> + 't> {
+fn concat<T: Write + 'static, R: Rng + 'static>(
+    calls: Vec<Box<GenFn<T, R>>>,
+) -> Box<GenFn<T, R>> {
     Box::new(move |c| {
         let mut size = 0;
         for call in calls.iter() {
