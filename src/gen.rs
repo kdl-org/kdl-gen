@@ -179,7 +179,7 @@ fn node_space<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context
 }
 
 // node-terminator := single-line-comment | newline | ';' | eof
-fn node_terminator<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn node_terminator<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
     Box::new(|ctx| {
         ctx.write_debug("<NODE-TERMINATOR>");
 
@@ -235,50 +235,45 @@ fn bare_identifier<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
 
 // identifier-char := unicode - linespace - [\/(){}<>;[]=,"]
 //Hax: To avoid generating one of the keywords (true|false|null), we don't use 'u' or 'l'
-fn identifier_char<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
-    Box::new(|ctx| {
-        return if ctx.conf.ascii_only {
-            write_rand_re("[-+0-9A-Za-km-tv-z]", 1)(ctx)
-        } else {
-            write_rand_re("[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
-                          \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                          \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                          \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                          \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)(ctx)
-        };
-    })
-}
-
-fn identifier_char_minus_digit<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
-    Box::new(|ctx| {
-        return if ctx.conf.ascii_only {
-            write_rand_re("[-+A-Za-km-tv-z]", 1)(ctx)
-        } else {
-            write_rand_re("[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
-                          \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
-                          \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
-                          \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
-                          \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)(ctx)
-        };
-    })
-}
-
-fn identifier_char_minus_digit_and_sign<T: Write, R: Rng>()
+fn identifier_char<T: Write + 'static, R: Rng + 'static>()
     -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
-    Box::new(|ctx| {
-        return if ctx.conf.ascii_only {
-            write_rand_re("[A-Za-km-tv-z]", 1)(ctx)
-        } else {
-            write_rand_re("[^-+ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
+
+    pick_ascii_or_utf8(
+        write_rand_re("[-+0-9A-Za-km-tv-z]", 1),
+        write_rand_re("[^ul\\\\/\\(\\){}<>;\\[\\]=,\"\
                           \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
                           \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
                           \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
                           \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
-                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)(ctx)
-        };
-    })
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    )
+}
+
+fn identifier_char_minus_digit<T: Write + 'static, R: Rng + 'static>()
+    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+
+    pick_ascii_or_utf8(
+        write_rand_re("[-+A-Za-km-tv-z]", 1),
+        write_rand_re("[^ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
+                          \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                          \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                          \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                          \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    )
+}
+
+fn identifier_char_minus_digit_and_sign<T: Write + 'static, R: Rng + 'static>()
+    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    pick_ascii_or_utf8(
+        write_rand_re("[A-Za-km-tv-z]", 1),
+        write_rand_re("[^-+ul0-9\\\\/\\(\\){}<>;\\[\\]=,\"\
+                          \u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\
+                          \u{2029}\u{0009}\u{0020}\u{00A0}\u{1680}\
+                          \u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\
+                          \u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\
+                          \u{200A}\u{202F}\u{205F}\u{3000}\u{FEFF}]", 1)
+    )
 }
 
 // keyword := boolean | 'null'
@@ -380,13 +375,10 @@ fn character<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<
                 write_literal("\\"),
                 escape(),
             ]),
-            Box::new(|c| {
-                return if c.conf.ascii_only {
-                    write_rand_re("[a-zA-Z0-9 .,;!@\\#\\$%\\^&*()]", 1)(c)
-                } else {
-                    write_rand_re("[^\\\\\"]", 1)(c)
-                };
-            }),
+            pick_ascii_or_utf8(
+                write_rand_re("[a-zA-Z0-9 .,;!@\\#\\$%\\^&*()]", 1),
+                write_rand_re("[^\\\\\"]", 1)
+            ),
         ])(ctx)
     })
 }
@@ -430,17 +422,13 @@ fn raw_string_hash<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
 }
 
 // raw-string-quotes := '"' .* '"'
-fn raw_string_quotes<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn raw_string_quotes<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
     Box::new(|ctx| {
         concat(vec![
             write_literal("\""),
-            Box::new(|c| {
-                return if c.conf.ascii_only {
-                    write_rand_re("\\w*", c.conf.string_len_max)(c)
-                } else {
-                    write_rand_re(".*", c.conf.string_len_max)(c)
-                };
-            }),
+            pick_ascii_or_utf8(
+                write_rand_re("\\w*", ctx.conf.string_len_max),
+                write_rand_re(".*", ctx.conf.string_len_max)),
             write_literal("\""),
         ])(ctx)
     })
@@ -567,26 +555,25 @@ fn linespace<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<
 }
 
 // newline := See Table (All line-break white_space)
-fn newline<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
-    Box::new(|ctx| {
-        return if ctx.conf.ascii_only {
-            select(vec![
-                write_literal("\u{000D}"),
-                write_literal("\u{000A}"),
-                write_literal("\u{000D}\u{000A}"),
-            ])(ctx)
-        } else {
-            select(vec![
-                write_literal("\u{000D}"),
-                write_literal("\u{000A}"),
-                write_literal("\u{000D}\u{000A}"),
-                write_literal("\u{0085}"),
-                write_literal("\u{000C}"),
-                write_literal("\u{2028}"),
-                write_literal("\u{2029}"),
-            ])(ctx)
-        };
-    })
+fn newline<T: Write + 'static, R: Rng + 'static>()
+    -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+
+    pick_ascii_or_utf8(
+        select(vec![
+            write_literal("\u{000D}"),
+            write_literal("\u{000A}"),
+            write_literal("\u{000D}\u{000A}"),
+        ]),
+        select(vec![
+            write_literal("\u{000D}"),
+            write_literal("\u{000A}"),
+            write_literal("\u{000D}\u{000A}"),
+            write_literal("\u{0085}"),
+            write_literal("\u{000C}"),
+            write_literal("\u{2028}"),
+            write_literal("\u{2029}"),
+        ])
+    )
 }
 
 // ws := bom | unicode-space | multi-line-comment
@@ -634,19 +621,16 @@ fn unicode_space<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Re
 }
 
 // single-line-comment := '//' ^newline+ (newline | eof)
-fn single_line_comment<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+fn single_line_comment<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
     Box::new(|ctx| {
         ctx.write_debug("<SINGLE-LINE-COMMENT>");
 
         let result = concat(vec![
             write_literal("//"),
-            Box::new(|c| {
-                return if c.conf.ascii_only {
-                    write_rand_re("\\w+", c.conf.comment_len_max)(c)
-                } else {
-                    write_rand_re("[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", c.conf.comment_len_max)(c)
-                };
-            }),
+            pick_ascii_or_utf8(
+                write_rand_re("\\w+", ctx.conf.comment_len_max),
+                write_rand_re("[^\u{000D}\u{000A}\u{000C}\u{0085}\u{2028}\u{2029}]+", ctx.conf.comment_len_max)
+            ),
             newline(),
         ])(ctx);
 
@@ -678,23 +662,20 @@ fn commented_block<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Co
         select(vec![
             write_literal("*/"),
             concat(vec![
-                Box::new(|c| {
-                    return if c.conf.ascii_only {
-                        select(vec![
-                            write_rand_re("\\*\\w", 1),
-                            write_rand_re("/\\w", 1),
-                            write_rand_re("\\w+", c.conf.comment_len_max),
-                            multi_line_comment(),
-                        ])(c)
-                    } else {
-                        select(vec![
-                            write_rand_re("\\*[^/]", 1),
-                            write_rand_re("/[^*]", 1),
-                            write_rand_re("[^*/]+", c.conf.comment_len_max),
-                            multi_line_comment(),
-                        ])(c)
-                    };
-                }),
+                pick_ascii_or_utf8(
+                    select(vec![
+                        write_rand_re("\\*\\w", 1),
+                        write_rand_re("/\\w", 1),
+                        write_rand_re("\\w+", ctx.conf.comment_len_max),
+                        multi_line_comment(),
+                    ]),
+                    select(vec![
+                        write_rand_re("\\*[^/]", 1),
+                        write_rand_re("/[^*]", 1),
+                        write_rand_re("[^*/]+", ctx.conf.comment_len_max),
+                        multi_line_comment(),
+                    ])
+                ),
                 commented_block(),
             ]),
         ])(ctx)
@@ -710,6 +691,18 @@ fn write_literal<T: Write, R: Rng>(
 fn write_rand_unicode_hex<T: Write, R: Rng>() -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
     Box::new(|c| {
         write_literal(&format!("{:#x}", c.gen_range(1..=0x10FFFF))[2..])(c) //Need to slice off the '0x'
+    })
+}
+fn pick_ascii_or_utf8<T: Write + 'static, R: Rng + 'static>(
+    ascii: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
+    unicode: Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>>,
+) -> Box<dyn Fn(&mut Context<T, R>) -> io::Result<usize>> {
+    Box::new(move |ctx| {
+        return if ctx.conf.ascii_only {
+            ascii(ctx)
+        } else {
+            unicode(ctx)
+        }
     })
 }
 
