@@ -172,7 +172,7 @@ fn node_space<T: Write + 'static, R: Rng + 'static>() -> Box<dyn Fn(&mut Context
             repeat(ws(), 1, ctx.conf.extra_space_max),
         ])(ctx);
 
-        ctx.write_debug("</NODE-CHILDREN>");
+        ctx.write_debug("</NODE-SPACE>");
 
         result
     })
