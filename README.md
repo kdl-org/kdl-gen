@@ -1,3 +1,5 @@
+# This project has moved to https://github.com/kdl-org/kdl-gen
+
 kdl-gen
 =======
 
