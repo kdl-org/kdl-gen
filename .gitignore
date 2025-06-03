@@ -2,3 +2,4 @@ kdl-gen.iml
 .idea/
 /target
 Cargo.lock
+.DS_Store

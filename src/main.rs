@@ -1,7 +1,7 @@
 use std::io::{BufWriter, Write};
 use std::process;
 use clap::Parser;
-use rand::{RngCore, SeedableRng, thread_rng};
+use rand::{RngCore, SeedableRng, rng};
 
 mod gen;
 
@@ -51,7 +51,7 @@ fn main() {
 
     let seed = match conf.rand_seed {
         Some(seed) => seed,
-        None => thread_rng().next_u64(),
+        None => rng().next_u64(),
     };
 
     std::io::stderr().write(format!("seed: {}\n", seed).as_bytes()).unwrap();

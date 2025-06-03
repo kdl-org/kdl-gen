@@ -1,11 +1,11 @@
 [package]
 name = "kdl-gen"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
-rand = "0.8.5"
-rand_chacha = "0.3.1"
-rand_regex = "0.15.1"
-regex-syntax = "0.6.27"
+rand = "0.9.1"
+rand_chacha = "0.9.0"
+rand_regex = "0.18.1"
+regex-syntax = "0.8.5"
 clap = { version = "4.0.18", features = ["derive"] }

@@ -1,7 +1,8 @@
 use std::io;
 use std::io::Write;
-use rand::{Rng, RngCore, Error};
-use rand::seq::SliceRandom;
+
+use rand::{Rng, RngCore};
+use rand::prelude::IndexedRandom;
 use regex_syntax::Parser;
 
 use crate::Configuration;
@@ -34,10 +35,6 @@ impl<'t, T: Write, R: Rng> RngCore for Context<'t, T, R> {
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         self.rng.fill_bytes(dest)
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
-        self.rng.try_fill_bytes(dest)
     }
 }
 
@@ -687,7 +684,7 @@ fn write_literal<T: Write + 'static, R: Rng + 'static>(s: &'static str) -> Box<G
 
 fn write_rand_unicode_hex<T: Write + 'static, R: Rng + 'static>() -> Box<GenFn<T, R>> {
     Box::new(|c| {
-        let s = format!("{:#x}", c.gen_range(1..=0x10FFFF));
+        let s = format!("{:#x}", c.random_range(1..=0x10FFFF));
         c.write(s[2..].as_bytes()) //Need to slice off the '0x'
     })
 }
@@ -724,7 +721,7 @@ fn maybe<T: Write + 'static, R: Rng + 'static>(
     func: Box<GenFn<T, R>>,
 ) -> Box<GenFn<T, R>> {
     Box::new(move |c| {
-        let rnd: f32 = c.gen();
+        let rnd: f32 = c.random();
         return if rnd > 0.5 {
             func(c)
         } else {
@@ -738,7 +735,7 @@ fn repeat<T: Write + 'static, R: Rng + 'static>(
     min_times: u32, max_times: u32,
 ) -> Box<GenFn<T, R>> {
     Box::new(move |c| {
-        let times = c.gen_range(min_times..=max_times);
+        let times = c.random_range(min_times..=max_times);
         let mut size = 0;
         for _ in 0..times {
             match func(c) {
